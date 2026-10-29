@@ -61,7 +61,7 @@ class BaselineGuards(unittest.TestCase):
     def test_kernel_must_match_android_and_kmi(self):
         raw = bytearray(64)
         raw[56:60] = b"ARM\x64"
-        self.assertEqual(driver.image_release(bytes(raw) +
+        self.assertEqual(driver.image_release(bytes(raw) + b"Linux version %s\x00" +
             b"Linux version 5.15.178-android13-8-00001-g6f2f96be86b9 (builder)"),
             "5.15.178-android13-8-00001-g6f2f96be86b9")
         for wrong in (b"android13-9-x", b"android13-80-x", b"android13-8foo"):
