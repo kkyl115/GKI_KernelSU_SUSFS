@@ -271,15 +271,33 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if config_file.exists():
             with open(config_file, "a") as f:
                 f.write("CONFIG_BBG=y\n")
+        # Preserve the quoted CONFIG_LSM defaults; the old DOTALL regex
+        # swallowed a default and unindented help, corrupting Kconfig.
         kconfig_file = common_dir / "security/Kconfig"
-        if kconfig_file.exists():
-            with open(kconfig_file, "r") as f:
-                content = f.read()
-            content = re.sub(r'(config LSM.*?)(default .*)(\n.*?help)',
-                           lambda m: m.group(1) + ('lockdown,baseband_guard' if 'lockdown' in m.group(2) and 'baseband_guard' not in m.group(2) else m.group(2)) + m.group(3),
-                           content, flags=re.DOTALL)
-            with open(kconfig_file, "w") as f:
-                f.write(content)
+        if not kconfig_file.is_file():
+            raise RuntimeError("Baseband-guard: security/Kconfig is missing")
+        with open(kconfig_file, "r") as f:
+            lines = f.read().splitlines()
+        in_lsm = False
+        defaults_found = 0
+        for i, line in enumerate(lines):
+            if re.match(r'^config[ \t]+LSM[ \t]*$', line):
+                in_lsm = True
+                continue
+            if in_lsm and re.match(r'^(?:config|menuconfig|choice|endchoice|endmenu|source|menu)[ \t]', line):
+                in_lsm = False
+            if not in_lsm:
+                continue
+            m = re.match(r'^([ \t]*default[ \t]+")([^"\n]+)(".*)$', line)
+            if not m:
+                continue
+            defaults_found += 1
+            if "baseband_guard" not in m.group(2).split(","):
+                lines[i] = m.group(1) + m.group(2) + ",baseband_guard" + m.group(3)
+        if defaults_found == 0:
+            raise RuntimeError("Baseband-guard: CONFIG_LSM quoted defaults not found")
+        with open(kconfig_file, "w") as f:
+            f.write("\n".join(lines) + "\n")
 
     def apply_susfs_patches(self):
         logger.info("=== 应用 SUSFS 补丁 ===")
@@ -298,7 +316,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             patch_file = common_dir / self.config.get_susfs_patch_filename()
             if patch_file.exists():
                 self._chdir(common_dir)
-                self._run_cmd(f"patch -p1 --fuzz=3 < {patch_file}", check=False)
+                self._run_cmd(f"patch -p1 --fuzz=0 < {patch_file}", check=True)
                 self._chdir(self.work_dir)
 
     def apply_sukisu_patches(self):
@@ -306,7 +324,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._chdir(self.work_dir / "common")
         hooks_patch = self.sukisu_patch_dir / "69_hide_stuff.patch"
         if hooks_patch.exists():
-            self._run_cmd(f"cp {hooks_patch} . && patch -p1 -F 3 < 69_hide_stuff.patch", check=False)
+            self._run_cmd(f"cp {hooks_patch} . && patch -p1 -F 0 < 69_hide_stuff.patch", check=True)
 
     def apply_zram_patches(self):
         if not self.config.use_zram:
@@ -325,7 +343,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         for patch in ["lz4kd.patch", "lz4k_oplus.patch"]:
             p = zram_patch_dir / patch
             if p.exists():
-                self._run_cmd(f"patch -p1 -F 3 < {p}", check=False)
+                self._run_cmd(f"patch -p1 -F 0 < {p}", check=True)
 
     def apply_task_mmu_fixes(self):
         logger.info("=== 应用 task_mmu.c 修复 ===")
