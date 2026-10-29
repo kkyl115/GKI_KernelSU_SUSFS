@@ -61,7 +61,6 @@ class KernelBuilder:
     KERNEL_CONFIG_TEMPLATE = """
 # === KernelSU Config ===
 CONFIG_KSU=y
-CONFIG_KPM=y
 CONFIG_KSU_SUSFS_SUS_SU=n
 
 # === TMPFS Config ===
@@ -411,6 +410,15 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
         with open(config_file, "a") as f:
             f.write(self.KERNEL_CONFIG_TEMPLATE)
+            # --no-kpm must disable the kernel feature as well as image patching.
+            # Remove a previous selection when reusing a source workspace.
+        content = config_file.read_text()
+        content = re.sub(r"^(?:CONFIG_KPM=.*|# CONFIG_KPM is not set)\n?", "",
+                         content, flags=re.MULTILINE)
+        config_file.write_text(content)
+        with open(config_file, "a") as f:
+            f.write("CONFIG_KPM=y\n" if self.config.use_kpm
+                    else "# CONFIG_KPM is not set\n")
             if self.config.kernel_version != "6.6":
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=y\n")
             else:

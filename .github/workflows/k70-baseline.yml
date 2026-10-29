@@ -1,0 +1,54 @@
+name: K70 source-matched baseline
+
+on:
+  push:
+    branches: [codex/k70-baseline-20261030]
+    paths:
+      - kernel/k70-baseline/**
+      - .github/workflows/k70-baseline.yml
+      - .github/workflows/scripts/kernel_builder.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: k70-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Test build guards
+        run: python3 -m unittest discover -s kernel/k70-baseline/tests -v
+      - name: Prepare disposable standard runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          # Fixed SDK paths on this disposable GitHub runner; no device operations.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev libncurses5 \
+            libncurses-dev rsync cpio lz4 python3 git binutils
+      - name: Compile and audit pinned baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          bash kernel/k70-baseline/run.sh "$RUNNER_TEMP/k70-source" "$GITHUB_WORKSPACE/artifacts" \
+            2>&1 | tee artifacts/build.log
+      - name: Preserve results or failure log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: k70-source-baseline-NOT-DEVICE-VALIDATED-${{ github.run_id }}
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 1
+          compression-level: 6
