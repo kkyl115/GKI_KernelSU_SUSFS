@@ -314,6 +314,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         susfs_patch = self.susfs_dir / "kernel_patches" / self.config.get_susfs_patch_filename()
         if not susfs_patch.is_file():
             raise RuntimeError(f"SUSFS patch not found: {susfs_patch}")
+        adjusted_namespace_patch = False
         # SUSFS's first fs/namespace.c hunk expects a Qualcomm trace/hooks/blk.h
         # include absent from the plain ACK android13-5.15-2025-03 tree.
         # Rebase only this known context line and verify all remaining hunks.
@@ -340,10 +341,11 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
                     # Never modify the cloned upstream SUSFS repository.
                     adjusted_patch = common_dir / self.config.get_susfs_patch_filename()
                     adjusted_patch.write_text(patch_content)
+                    adjusted_namespace_patch = True
                     logger.info("Adjusted SUSFS namespace hunk for ACK without trace/hooks/blk.h")
 
         if susfs_patch.exists():
-            if not (common_dir / self.config.get_susfs_patch_filename()).exists():
+            if not adjusted_namespace_patch:
                 self._run_cmd(f"cp {susfs_patch} {common_dir}/", check=True)
         for src, dst in [
             (self.susfs_dir / "kernel_patches/fs", common_dir / "fs/"),
