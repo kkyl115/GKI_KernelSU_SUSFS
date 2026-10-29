@@ -1,5 +1,15 @@
 # GKI SukiSU-Ultra + SUSFS 构建系统
 
+## K70 专用构建入口
+
+K70 / OS3.0.302 的首轮同源构建使用 **K70 source-matched baseline** 工作流。
+源码固定为已知可启动版本中的 `6f2f96be86b9`（5.15.178 / Android 13 / KMI 8），
+不附加 Root/KPM/SUSFS 补丁，不自动刷机。它与下面的通用 Root 内核构建流程分别维护。
+
+- [构建、产物审核与实机边界](kernel/k70-baseline/README.md)
+- [可添加技术、优先级与验收方案](K70-TECHNOLOGY-PLAN.md)
+
+
 ### 这是一个自动构建 GKI 内核的仓库
 
 > 不支持一加 ColorOS14、15 和非 GKI 
