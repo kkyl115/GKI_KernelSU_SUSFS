@@ -1,5 +1,4 @@
 """Offline regression checks for the KPM switch and baseline artifact gates."""
-import copy
 import importlib.util
 import json
 import os
@@ -65,8 +64,9 @@ class BaselineGuards(unittest.TestCase):
         self.assertEqual(driver.image_release(bytes(raw) +
             b"Linux version 5.15.178-android13-8-00001-g6f2f96be86b9 (builder)"),
             "5.15.178-android13-8-00001-g6f2f96be86b9")
-        with self.assertRaisesRegex(ValueError, "release"):
-            driver.image_release(bytes(raw) + b"Linux version 5.15.178-android13-9-x ")
+        for wrong in (b"android13-9-x", b"android13-80-x", b"android13-8foo"):
+            with self.subTest(wrong=wrong), self.assertRaisesRegex(ValueError, "release"):
+                driver.image_release(bytes(raw) + b"Linux version 5.15.178-" + wrong + b" ")
 
 
 class KPMSwitchRegression(unittest.TestCase):

@@ -132,10 +132,13 @@ def validate_config(text):
 def image_release(data):
     if len(data) < 64 or data[56:60] != b"ARM\x64":
         raise ValueError("Not a raw arm64 Linux Image")
-    match = re.search(rb"Linux version (5\.15\.178-android13-8[^\s\x00]*)", data)
+    match = re.search(rb"Linux version ([^\s\x00]+)", data)
     if not match:
         raise ValueError("Image release does not match baseline kernel/KMI")
-    return match.group(1).decode("ascii")
+    release = match.group(1).decode("ascii")
+    if release != RELEASE_PREFIX and not release.startswith(RELEASE_PREFIX + "-"):
+        raise ValueError("Image release does not match baseline kernel/KMI")
+    return release
 
 
 def audit(root, artifacts, lock):
