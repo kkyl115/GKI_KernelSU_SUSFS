@@ -287,18 +287,23 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if not block:
             raise RuntimeError("Cannot safely update BBG: config LSM block was not found")
         body = block.group("body")
-        default = re.search(
-            r'(?m)^([ \t]*default[ \t]+")([^"\r\n]*)("[^\n]*)$',
-            body,
+        default_pattern = re.compile(
+            r'(?m)^([ \t]*default[ \t]+")([^"\r\n]*)("[^\n]*)$'
         )
-        if not default:
+        if not default_pattern.search(body):
             raise RuntimeError("Cannot safely update BBG: quoted LSM default was not found")
-        lsms = [value.strip() for value in default.group(2).split(",") if value.strip()]
-        if "baseband_guard" not in lsms:
-            index = lsms.index("lockdown") + 1 if "lockdown" in lsms else len(lsms)
-            lsms.insert(index, "baseband_guard")
-            body = body[:default.start(2)] + ",".join(lsms) + body[default.end(2):]
-            content = content[:block.start("body")] + body + content[block.end("body"):]
+
+        def add_bbg_to_default(match):
+            lsms = [value.strip() for value in match.group(2).split(",") if value.strip()]
+            if "baseband_guard" not in lsms:
+                index = lsms.index("lockdown") + 1 if "lockdown" in lsms else len(lsms)
+                lsms.insert(index, "baseband_guard")
+            return match.group(1) + ",".join(lsms) + match.group(3)
+
+        # CONFIG_LSM has multiple conditional default lines; update all of them.
+        new_body = default_pattern.sub(add_bbg_to_default, body)
+        if new_body != body:
+            content = content[:block.start("body")] + new_body + content[block.end("body"):]
             with open(kconfig_file, "w") as f:
                 f.write(content)
 
@@ -309,8 +314,37 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         susfs_patch = self.susfs_dir / "kernel_patches" / self.config.get_susfs_patch_filename()
         if not susfs_patch.is_file():
             raise RuntimeError(f"SUSFS patch not found: {susfs_patch}")
+        # SUSFS's first fs/namespace.c hunk expects a Qualcomm trace/hooks/blk.h
+        # include absent from the plain ACK android13-5.15-2025-03 tree.
+        # Rebase only this known context line and verify all remaining hunks.
+        if self.config.android_version == "android13" and self.config.kernel_version == "5.15":
+            namespace_file = common_dir / "fs/namespace.c"
+            if namespace_file.exists():
+                namespace_src = namespace_file.read_text()
+                if "#include <trace/hooks/blk.h>" not in namespace_src:
+                    patch_content = susfs_patch.read_text()
+                    section_start = patch_content.find("diff --git a/fs/namespace.c b/fs/namespace.c\n")
+                    section_end = patch_content.find("diff --git ", section_start + 10) if section_start >= 0 else -1
+                    if section_start < 0:
+                        raise RuntimeError("SUSFS namespace patch section not found")
+                    if section_end < 0:
+                        section_end = len(patch_content)
+                    section = patch_content[section_start:section_end]
+                    header = "@@ -32,11 +32,21 @@"
+                    expected = " #include <trace/hooks/blk.h>\n"
+                    if header not in section or section.count(expected) != 1:
+                        raise RuntimeError("SUSFS namespace context changed: manual rebase required")
+                    section = section.replace(header, "@@ -32,10 +32,20 @@", 1)
+                    section = section.replace(expected, "", 1)
+                    patch_content = patch_content[:section_start] + section + patch_content[section_end:]
+                    # Never modify the cloned upstream SUSFS repository.
+                    adjusted_patch = common_dir / self.config.get_susfs_patch_filename()
+                    adjusted_patch.write_text(patch_content)
+                    logger.info("Adjusted SUSFS namespace hunk for ACK without trace/hooks/blk.h")
+
         if susfs_patch.exists():
-            self._run_cmd(f"cp {susfs_patch} {common_dir}/", check=True)
+            if not (common_dir / self.config.get_susfs_patch_filename()).exists():
+                self._run_cmd(f"cp {susfs_patch} {common_dir}/", check=True)
         for src, dst in [
             (self.susfs_dir / "kernel_patches/fs", common_dir / "fs/"),
             (self.susfs_dir / "kernel_patches/include/linux", common_dir / "include/linux/"),
