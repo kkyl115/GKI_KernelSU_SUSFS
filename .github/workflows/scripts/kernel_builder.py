@@ -272,12 +272,33 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(config_file, "a") as f:
                 f.write("CONFIG_BBG=y\n")
         kconfig_file = common_dir / "security/Kconfig"
-        if kconfig_file.exists():
-            with open(kconfig_file, "r") as f:
-                content = f.read()
-            content = re.sub(r'(config LSM.*?)(default .*)(\n.*?help)',
-                           lambda m: m.group(1) + ('lockdown,baseband_guard' if 'lockdown' in m.group(2) and 'baseband_guard' not in m.group(2) else m.group(2)) + m.group(3),
-                           content, flags=re.DOTALL)
+        if not kconfig_file.exists():
+            raise RuntimeError("BBG setup failed: security/Kconfig is missing")
+        with open(kconfig_file, "r") as f:
+            content = f.read()
+
+        # Only change the quoted CONFIG_LSM default. The previous regex used
+        # DOTALL with a greedy "default .*" and corrupted the surrounding
+        # Kconfig/help text (Actions run 40811190068).
+        block = re.search(
+            r'(?ms)^config LSM[ \t]*\n(?P<body>.*?)(?=^(?:config|menuconfig|endmenu|menu|source|choice)\b|\Z)',
+            content,
+        )
+        if not block:
+            raise RuntimeError("Cannot safely update BBG: config LSM block was not found")
+        body = block.group("body")
+        default = re.search(
+            r'(?m)^([ \t]*default[ \t]+")([^"\r\n]*)("[^\n]*)$',
+            body,
+        )
+        if not default:
+            raise RuntimeError("Cannot safely update BBG: quoted LSM default was not found")
+        lsms = [value.strip() for value in default.group(2).split(",") if value.strip()]
+        if "baseband_guard" not in lsms:
+            index = lsms.index("lockdown") + 1 if "lockdown" in lsms else len(lsms)
+            lsms.insert(index, "baseband_guard")
+            body = body[:default.start(2)] + ",".join(lsms) + body[default.end(2):]
+            content = content[:block.start("body")] + body + content[block.end("body"):]
             with open(kconfig_file, "w") as f:
                 f.write(content)
 
@@ -286,8 +307,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._chdir(self.work_dir)
         common_dir = self.work_dir / "common"
         susfs_patch = self.susfs_dir / "kernel_patches" / self.config.get_susfs_patch_filename()
+        if not susfs_patch.is_file():
+            raise RuntimeError(f"SUSFS patch not found: {susfs_patch}")
         if susfs_patch.exists():
-            self._run_cmd(f"cp {susfs_patch} {common_dir}/", check=False)
+            self._run_cmd(f"cp {susfs_patch} {common_dir}/", check=True)
         for src, dst in [
             (self.susfs_dir / "kernel_patches/fs", common_dir / "fs/"),
             (self.susfs_dir / "kernel_patches/include/linux", common_dir / "include/linux/"),
@@ -298,7 +321,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             patch_file = common_dir / self.config.get_susfs_patch_filename()
             if patch_file.exists():
                 self._chdir(common_dir)
-                self._run_cmd(f"patch -p1 --fuzz=3 < {patch_file}", check=False)
+                self._run_cmd(f"patch -p1 --fuzz=3 --batch < {patch_file}", check=True)
                 self._chdir(self.work_dir)
 
     def apply_sukisu_patches(self):
@@ -306,7 +329,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._chdir(self.work_dir / "common")
         hooks_patch = self.sukisu_patch_dir / "69_hide_stuff.patch"
         if hooks_patch.exists():
-            self._run_cmd(f"cp {hooks_patch} . && patch -p1 -F 3 < 69_hide_stuff.patch", check=False)
+            self._run_cmd(f"cp {hooks_patch} . && patch -p1 -F 3 --batch < 69_hide_stuff.patch", check=True)
 
     def apply_zram_patches(self):
         if not self.config.use_zram:
@@ -325,7 +348,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         for patch in ["lz4kd.patch", "lz4k_oplus.patch"]:
             p = zram_patch_dir / patch
             if p.exists():
-                self._run_cmd(f"patch -p1 -F 3 < {p}", check=False)
+                self._run_cmd(f"patch -p1 -F 3 --batch < {p}", check=True)
 
     def apply_task_mmu_fixes(self):
         logger.info("=== 应用 task_mmu.c 修复 ===")
